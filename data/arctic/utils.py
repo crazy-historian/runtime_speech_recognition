@@ -7,43 +7,18 @@ from torch.utils.data import Dataset, DataLoader
 from typing import Optional, Union, List, Callable
 
 
-class WavToBytes:
-    """
-        Read WAV file and return raw audio data in bytes.
-
-    """
-
-    def __init__(self, phone_codes: Union[List[str], str] = None):
-        self.phone_codes = phone_codes
-
-    def __call__(self, file_name: str, textgrid_labels_file: str):
-        wav_file = AudioSegment.from_wav(file_name)
-        if self.phone_codes:
-            wav_fragments = dict()
-            labels = textgrid.TextGrid.fromFile(textgrid_labels_file)
-            for interval in labels[1]:
-                if interval.mark not in self.phone_codes:
-                    continue
-                start = interval.minTime * 1000
-                end = interval.maxTime * 1000
-                if interval.mark not in wav_fragments:
-                    wav_fragments[interval.mark] = list()
-                wav_fragments[interval.mark].append(wav_file[start:end].raw_data)
-            return wav_fragments
-        else:
-            return wav_file[:].raw_data
-
-
 class ArcticDataset(Dataset):
     """ ARCTIC L2 dataset """
 
     def __init__(self,
                  root_dir: str,
-                 transform: Callable = WavToBytes(),
-                 gender: Optional[Union[str, List[str]]] = None,
-                 dialect: Optional[Union[str, List[str]]] = None):
+                 transform: Callable = None,
+                 phone_codes: Union[List[str], str] = None,
+                 gender: Optional[str] = None,
+                 dialect: Optional[List[str]] = None):
         self.root_dir = root_dir
         self.transform = transform
+        self.phone_codes = phone_codes
         self.speaker_description = {
             'ABA': ['Arabic', 'M'],
             'SKA': ['Arabic', 'F'],
@@ -71,8 +46,8 @@ class ArcticDataset(Dataset):
             'TLV': ['Vietnamese', 'M']
         }
         self.description_table = self._prepare_description()
-        self.gender = gender
-        self.dialect = dialect
+        self.description_table = self._filter_description_table(gender, dialect)
+        self.audio_fragments = self._get_audio_fragments()
 
     def _prepare_description(self) -> pd.DataFrame:
         table = list()
@@ -88,24 +63,50 @@ class ArcticDataset(Dataset):
                     str(annotation_file),
                     str(audio_file)
                 ])
-
             table.extend(table_rows)
 
-        return pd.DataFrame(data=table, columns=[
-            'speaker_nickname', 'speaker_l1', 'speaker_gender', 'annotation_file_path', 'wav_file_path'
+        df = pd.DataFrame(data=table, columns=[
+            'nickname', 'l1', 'gender', 'labels_file_path', 'wav_file_path'
         ])
+        df.to_csv('arctic_description.csv', index=False)
+
+        return df
+
+    def _filter_description_table(self, gender: Optional[str], dialect: Optional[str]) -> pd.DataFrame:
+        if gender is not None:
+            self.description_table = self.description_table.loc[
+                self.description_table['gender'] == gender
+            ]
+        if dialect is not None:
+            dialects = self.description_table['l1'].isin(dialect)
+            self.description_table = self.description_table[dialects]
+
+        return self.description_table
+
+    def _get_audio_fragments(self) -> list:
+        fragments = list()
+        try:
+            for _, file in self.description_table.iterrows():
+                labels = textgrid.TextGrid.fromFile(file['labels_file_path'])
+                timings = list()
+                for interval in labels[1]:
+                    if self.phone_codes is None or interval.mark in self.phone_codes:
+                        start = interval.minTime * 1000
+                        end = interval.maxTime * 1000
+                        timings.append((interval.mark, start, end))
+                if len(timings) > 0:
+                    wav_file = AudioSegment.from_wav(file['wav_file_path'])
+                    for timing in timings:
+                        fragments.append([ timing[0], wav_file[timing[1]:timing[2]].raw_data])
+        except ValueError:
+            ...
+        return fragments
 
     def __len__(self):
-        return self.description_table.shape[1]
+        return len(self.audio_fragments)
 
     def __getitem__(self, item: int):
-        return self.transform(
-            file_name=self.description_table.iloc[item]['wav_file_path'],
-            textgrid_labels_file=self.description_table.iloc[item]['annotation_file_path']
-        )
+        if self.transform:
+            return self.transform(self.audio_fragments[item])
+        return self.audio_fragments[item]
 
-
-
-
-dataset = ArcticDataset(r'E:\voice_datasets\arctic\l2arctic_release_v5.0\data')
-print(dataset[0])
