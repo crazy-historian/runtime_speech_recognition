@@ -7,6 +7,7 @@ from pathlib import Path
 from pydub import AudioSegment
 from torch.utils.data import Dataset
 
+import torch.nn.functional as F
 from dataclasses import dataclass, astuple
 from typing import Optional, Union, List, Callable
 
@@ -100,6 +101,7 @@ class TIMITDataset(Dataset):
 
     def _get_audio_fragments(self) -> list:
         fragments = list()
+        self.description_table = self.description_table.sample(frac=1.0)
         for _, file in self.description_table.iterrows():
             timings = list()
             with open(file['labels_file_path']) as labels:
@@ -130,8 +132,11 @@ class TIMITDataset(Dataset):
         t1 = round(audio_fragment.t1 * frame_rate)
         t2 = round(audio_fragment.t2 * frame_rate)
         data, _ = torchaudio.load(audio_fragment.source_file)
+        data = data[:, t1:t2]
+        # TODO: add padding length as an external parameter
+        new_shape = 16000 - data.shape[1]
         return AudioData(
-            data=data[:, t1:t2],
+            data=F.pad(data, (0, new_shape), 'constant', 0.0),
             label=audio_fragment.label,
             frame_rate=frame_rate,
             sample_width=sample_width
@@ -232,6 +237,7 @@ class ArcticDataset(Dataset):
 
     def _get_audio_fragments(self) -> list:
         fragments = list()
+        self.description_table = self.description_table.sample(frac=1.0)
         try:
             for _, file in self.description_table.iterrows():
                 labels = textgrid.TextGrid.fromFile(file['labels_file_path'])
@@ -262,8 +268,11 @@ class ArcticDataset(Dataset):
         t1 = round(audio_fragment.t1 * frame_rate)
         t2 = round(audio_fragment.t2 * frame_rate)
         data, _ = torchaudio.load(audio_fragment.source_file)
+        data = data[:, t1:t2]
+        new_shape = 16000 - data.shape[1]
+        # TODO: add padding length as an external parameter
         return AudioData(
-            data=data[:, t1:t2],
+            data=F.pad(data, (0, new_shape), 'constant', 0.0),
             label=audio_fragment.label,
             frame_rate=frame_rate,
             sample_width=sample_width
