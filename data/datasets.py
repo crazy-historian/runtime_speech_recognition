@@ -37,12 +37,14 @@ class TIMITDataset(Dataset):
     def __init__(self,
                  root_dir: str,
                  usage: str,
+                 padding: int = 0,
                  percentage: Optional[float] = None,
                  transform: Optional[Callable] = None,
                  phone_codes: Union[List[str], str] = None,
                  gender: Optional[str] = None,
                  dialect: Optional[List[str]] = None
                  ):
+        self.padding = padding
         self.timit_constant = 15987
         self.root_dir = root_dir
         self.phone_codes = phone_codes
@@ -124,8 +126,7 @@ class TIMITDataset(Dataset):
                     )
         return fragments
 
-    @staticmethod
-    def _load_audio_fragment(audio_fragment: AudioFragment) -> AudioData:
+    def _load_audio_fragment(self, audio_fragment: AudioFragment) -> AudioData:
         metadata, encoding = torchaudio.info(audio_fragment.source_file)
         frame_rate = int(metadata.rate)
         sample_width = encoding.bits_per_sample
@@ -133,14 +134,22 @@ class TIMITDataset(Dataset):
         t2 = round(audio_fragment.t2 * frame_rate)
         data, _ = torchaudio.load(audio_fragment.source_file)
         data = data[:, t1:t2]
-        # TODO: add padding length as an external parameter
-        new_shape = 16000 - data.shape[1]
-        return AudioData(
-            data=F.pad(data, (0, new_shape), 'constant', 0.0),
-            label=audio_fragment.label,
-            frame_rate=frame_rate,
-            sample_width=sample_width
-        )
+        if self.padding != 0:
+            new_shape = self.padding - data.shape[1]
+            return AudioData(
+                data=F.pad(data, (0, new_shape), 'constant', 0.0),
+                label=audio_fragment.label,
+                frame_rate=frame_rate,
+                sample_width=sample_width
+            )
+        else:
+            return AudioData(
+                data=data,
+                label=audio_fragment.label,
+                frame_rate=frame_rate,
+                sample_width=sample_width
+            )
+
 
     def __len__(self) -> int:
         return len(self.audio_fragments)
@@ -159,11 +168,13 @@ class ArcticDataset(Dataset):
     def __init__(self,
                  root_dir: str,
                  usage: str,
+                 padding: int = 0,
                  fraction: float = 0.7,
                  transform: Callable = None,
                  phone_codes: Union[List[str], str] = None,
                  gender: Optional[str] = None,
                  dialect: Optional[List[str]] = None):
+        self.padding = 0
         self.root_dir = root_dir
         self.transform = transform
         self.phone_codes = phone_codes
@@ -260,8 +271,7 @@ class ArcticDataset(Dataset):
             ...
         return fragments
 
-    @staticmethod
-    def _load_audio_fragment(audio_fragment: AudioFragment) -> AudioData:
+    def _load_audio_fragment(self, audio_fragment: AudioFragment) -> AudioData:
         metadata, encoding = torchaudio.info(audio_fragment.source_file)
         frame_rate = int(metadata.rate)
         sample_width = encoding.bits_per_sample
@@ -269,14 +279,21 @@ class ArcticDataset(Dataset):
         t2 = round(audio_fragment.t2 * frame_rate)
         data, _ = torchaudio.load(audio_fragment.source_file)
         data = data[:, t1:t2]
-        new_shape = 16000 - data.shape[1]
-        # TODO: add padding length as an external parameter
-        return AudioData(
-            data=F.pad(data, (0, new_shape), 'constant', 0.0),
-            label=audio_fragment.label,
-            frame_rate=frame_rate,
-            sample_width=sample_width
-        )
+        if self.padding != 0:
+            new_shape = self.padding - data.shape[1]
+            return AudioData(
+                data=F.pad(data, (0, new_shape), 'constant', 0.0),
+                label=audio_fragment.label,
+                frame_rate=frame_rate,
+                sample_width=sample_width
+            )
+        else:
+            return AudioData(
+                data=data,
+                label=audio_fragment.label,
+                frame_rate=frame_rate,
+                sample_width=sample_width
+            )
 
     def __len__(self) -> int:
         return len(self.audio_fragments)
