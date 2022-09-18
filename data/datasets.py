@@ -3,8 +3,8 @@ import numpy as np
 import textgrid
 import torchaudio
 import torch
+from abc import ABC, abstractmethod
 from pathlib import Path
-from pydub import AudioSegment
 from torch.utils.data import Dataset
 
 import torch.nn.functional as F
@@ -31,31 +31,91 @@ class AudioData:
         return iter(astuple(self))
 
 
-class TIMITDataset(Dataset):
+class AudioDataset(Dataset, ABC):
+    @abstractmethod
+    def _prepare_description(self, *args, **kwargs) -> pd.DataFrame:
+        ...
+
+    @abstractmethod
+    def _filter_description_table(self, *args, **kwargs) -> pd.DataFrame:
+        ...
+
+    @abstractmethod
+    def _get_audio_fragments(self) -> List[AudioFragment]:
+        ...
+
+    def _load_audio_fragment(self, audio_fragment: AudioFragment) -> AudioData:
+        metadata = torchaudio.info(audio_fragment.source_file)
+        frame_rate = int(metadata.sample_rate)
+        sample_width = metadata.bits_per_sample
+        t1 = round(audio_fragment.t1 * frame_rate)
+        t2 = round(audio_fragment.t2 * frame_rate)
+        data, _ = torchaudio.load(audio_fragment.source_file)
+        data = data[:, t1:t2]
+        if self.padding != 0:
+            new_shape = self.padding - data.shape[1]
+            return AudioData(
+                data=F.pad(data, (0, new_shape), 'constant', 0.0),
+                label=audio_fragment.label,
+                frame_rate=frame_rate,
+                sample_width=sample_width
+            )
+        else:
+            return AudioData(
+                data=data,
+                label=audio_fragment.label,
+                frame_rate=frame_rate,
+                sample_width=sample_width
+            )
+
+
+class PhonemeLabeler:
+    def __init__(self, phoneme_classes: Optional[dict[str, list]] = None, mode: Optional[str] = 'default'):
+        self.mode = mode
+        self.phoneme_classes = phoneme_classes
+
+    def __getitem__(self, phoneme_label: str) -> str:
+        if self.mode == 'default':
+            return phoneme_label
+        else:
+            for phoneme_class, phoneme_labels in self.phoneme_classes.items():
+                if phoneme_label in phoneme_labels:
+                    return phoneme_class
+            else:
+                return phoneme_label
+
+
+class TIMITDataset(AudioDataset):
     """ The DARPA TIMIT Acoustic-Phonetic Continuous Speech Corpus """
 
     def __init__(self,
                  root_dir: str,
+                 description_file_path: str,
                  usage: str,
                  padding: int = 0,
                  percentage: Optional[float] = None,
                  transform: Optional[Callable] = None,
                  phone_codes: Union[List[str], str] = None,
                  gender: Optional[str] = None,
-                 dialect: Optional[List[str]] = None
+                 dialect: Optional[List[str]] = None,
+                 phoneme_labeler: PhonemeLabeler = PhonemeLabeler()
                  ):
+        super().__init__()
         self.padding = padding
         self.timit_constant = 15987
         self.root_dir = root_dir
+        self.description_file_path = description_file_path
         self.phone_codes = phone_codes
         self.transform = transform
+        self.phoneme_labeler = phoneme_labeler
+
         self.description_table = self._prepare_description()
         self.description_table = self._filter_description_table(usage, percentage, gender, dialect)
         self.audio_fragments = self._get_audio_fragments()
 
     def _prepare_description(self):
-        if Path('./data/timit_description.csv').is_file():
-            return pd.read_csv('./data/timit_description.csv')
+        if Path(self.description_file_path).is_file():
+            return pd.read_csv(self.description_file_path)
         else:
             dialects = {'DR1': 'New England', 'DR2': 'Northern', 'DR3': 'North Midland', 'DR4': 'South Midland',
                         'DR5': 'Southern', 'DR6': 'New York City', 'DR7': 'Western', 'DR8': 'Army Brat'}
@@ -81,7 +141,7 @@ class TIMITDataset(Dataset):
                             )
             df = pd.DataFrame(data=table, columns=['usage', 'speaker_id', 'speaker_gender',
                                                    'dialect', 'wav_file_path', 'labels_file_path'])
-            df.to_csv('./data/timit_description.csv', index=False)
+            df.to_csv(self.description_file_path, index=False)
 
             return df
 
@@ -113,7 +173,7 @@ class TIMITDataset(Dataset):
                     if self.phone_codes is None or mark in self.phone_codes:
                         start = round(int(label[0]) / self.timit_constant, 3)
                         end = round(int(label[1]) / self.timit_constant, 3)
-                        timings.append((mark, start, end))
+                        timings.append((self.phoneme_labeler[mark], start, end))
 
                 for timing in timings:
                     fragments.append(
@@ -125,31 +185,6 @@ class TIMITDataset(Dataset):
                         )
                     )
         return fragments
-
-    def _load_audio_fragment(self, audio_fragment: AudioFragment) -> AudioData:
-        metadata, encoding = torchaudio.info(audio_fragment.source_file)
-        frame_rate = int(metadata.rate)
-        sample_width = encoding.bits_per_sample
-        t1 = round(audio_fragment.t1 * frame_rate)
-        t2 = round(audio_fragment.t2 * frame_rate)
-        data, _ = torchaudio.load(audio_fragment.source_file)
-        data = data[:, t1:t2]
-        if self.padding != 0:
-            new_shape = self.padding - data.shape[1]
-            return AudioData(
-                data=F.pad(data, (0, new_shape), 'constant', 0.0),
-                label=audio_fragment.label,
-                frame_rate=frame_rate,
-                sample_width=sample_width
-            )
-        else:
-            return AudioData(
-                data=data,
-                label=audio_fragment.label,
-                frame_rate=frame_rate,
-                sample_width=sample_width
-            )
-
 
     def __len__(self) -> int:
         return len(self.audio_fragments)
@@ -167,16 +202,22 @@ class ArcticDataset(Dataset):
 
     def __init__(self,
                  root_dir: str,
+                 description_file_path: str,
                  usage: str,
                  padding: int = 0,
                  fraction: float = 0.7,
                  transform: Callable = None,
                  phone_codes: Union[List[str], str] = None,
                  gender: Optional[str] = None,
-                 dialect: Optional[List[str]] = None):
+                 dialect: Optional[List[str]] = None,
+                 phoneme_labeler=PhonemeLabeler()):
         self.padding = 0
         self.root_dir = root_dir
+        self.description_file_path = description_file_path
+
         self.transform = transform
+        self.phoneme_labeler = phoneme_labeler
+
         self.phone_codes = phone_codes
         self.speaker_description = {
             'ABA': ['Arabic', 'M'],
@@ -209,8 +250,8 @@ class ArcticDataset(Dataset):
         self.audio_fragments = self._get_audio_fragments()
 
     def _prepare_description(self, fraction: float) -> pd.DataFrame:
-        if Path('./data/arctic_description.csv').is_file():
-            return pd.read_csv('./data/arctic_description.csv')
+        if Path(self.description_file_path).is_file():
+            return pd.read_csv(self.description_file_path)
         else:
             table = list()
             for speaker_dir in Path(self.root_dir).iterdir():
@@ -230,7 +271,7 @@ class ArcticDataset(Dataset):
             df = pd.DataFrame(data=table, columns=['nickname', 'l1', 'gender', 'labels_file_path', 'wav_file_path'])
             df['usage'] = 'train'
             df.loc[df.sample(frac=fraction).index.to_list(), 'usage'] = 'test'
-            df.to_csv('./data/arctic_description.csv', index=False)
+            df.to_csv(self.description_file_path, index=False)
 
             return df
 
@@ -257,7 +298,7 @@ class ArcticDataset(Dataset):
                     if self.phone_codes is None or interval.mark in self.phone_codes:
                         start = interval.minTime
                         end = interval.maxTime
-                        timings.append((interval.mark, start, end))
+                        timings.append((self.phoneme_labeler[interval.mark], start, end))
                 for timing in timings:
                     fragments.append(
                         AudioFragment(
@@ -270,30 +311,6 @@ class ArcticDataset(Dataset):
         except ValueError:
             ...
         return fragments
-
-    def _load_audio_fragment(self, audio_fragment: AudioFragment) -> AudioData:
-        metadata, encoding = torchaudio.info(audio_fragment.source_file)
-        frame_rate = int(metadata.rate)
-        sample_width = encoding.bits_per_sample
-        t1 = round(audio_fragment.t1 * frame_rate)
-        t2 = round(audio_fragment.t2 * frame_rate)
-        data, _ = torchaudio.load(audio_fragment.source_file)
-        data = data[:, t1:t2]
-        if self.padding != 0:
-            new_shape = self.padding - data.shape[1]
-            return AudioData(
-                data=F.pad(data, (0, new_shape), 'constant', 0.0),
-                label=audio_fragment.label,
-                frame_rate=frame_rate,
-                sample_width=sample_width
-            )
-        else:
-            return AudioData(
-                data=data,
-                label=audio_fragment.label,
-                frame_rate=frame_rate,
-                sample_width=sample_width
-            )
 
     def __len__(self) -> int:
         return len(self.audio_fragments)
