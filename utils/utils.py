@@ -1,6 +1,6 @@
-import numpy as np
 import torch
-
+import librosa
+import numpy as np
 import matplotlib.pyplot as plt
 
 from IPython.display import Audio, display
@@ -12,6 +12,16 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+
+
+def make_cuda_deterministic() -> None:
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def provide_reproducibility(seed: int = 42) -> None:
+    set_seed(seed)
+    make_cuda_deterministic()
 
 
 def play_audio(data: np.ndarray, rate: int) -> None:

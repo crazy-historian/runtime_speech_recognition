@@ -1,9 +1,8 @@
-import torch
 import pytorch_lightning as pl
-from torch import nn
-from torchmetrics import Metric, MetricCollection, Accuracy, Precision, Recall, F1Score
 
 from typing import Any
+
+from models.mixins import *
 
 
 class LossMetric(Metric):
@@ -94,9 +93,9 @@ class ClassifierModuleMixin(pl.LightningModule):
 
 
 class AudioPreprocessorCallback(pl.Callback):
-    def __init__(self, transform: nn.Module):
+    def __init__(self, transform: nn.Module, device: str):
         self.transform = transform
-        self.transform.to('cuda')
+        self.transform.to(device)
 
     def on_train_batch_start(
             self,
@@ -132,25 +131,23 @@ class AudioPreprocessorCallback(pl.Callback):
         return data, labels
 
 
-class PhonemeRecognizer(ClassifierModuleMixin):
+class PhonemeRecognizer(ClassifierTensorBoardMixin, pl.LightningModule):
     def __init__(self,
-                 num_classes: int,
-                 acoustic_model,
+                 acoustic_model: torch.nn.Module,
                  model_params: dict,
-                 loss_criterion,
+                 num_classes: int,
                  lr: float,
-                 log_grad_and_acts_every_n_steps: int = 10,
-                 target_type = torch.float32):
+                 loss_criterion,
+                 target_type=torch.float32
+                 ):
+        #
         super().__init__()
-        self.num_classes = num_classes
-        self.acoustic_model = acoustic_model(**model_params)
         self.loss_criterion = loss_criterion
-        self.lr = lr
-        self.target_type = target_type
-        self.log_grad_and_acts_every_n_steps = log_grad_and_acts_every_n_steps
-
-        self.save_hyperparameters(ignore=['acoustic_model', 'target_type'])
-        self._set_metrics()
+        self.save_hyperparameters(ignore=['acoustic_model'])
+        self._init_metrics()
+        self.log_grad_and_acts_every_n_steps = 10
+        self.acoustic_model = acoustic_model(**model_params)
+        # self.save_hyperparameters(ignore=['acoustic_model'])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.acoustic_model(x)
@@ -158,14 +155,14 @@ class PhonemeRecognizer(ClassifierModuleMixin):
     def training_step(self, batch: torch.Tensor, batch_idx: int):
         data, target = batch
         output = self.acoustic_model(data)
-        loss = self.loss_criterion(output.squeeze(), target.to(self.target_type))
+        loss = self.loss_criterion(output.squeeze(), target.to(self.hparams.target_type))
 
         return {'loss': loss, 'preds': output.squeeze(), 'targets': target}
 
     def validation_step(self, batch, batch_idx):
         data, target = batch
         output = self.acoustic_model(data)
-        loss = self.loss_criterion(output.squeeze(), target.to(self.target_type))
+        loss = self.loss_criterion(output.squeeze(), target.to(self.hparams.target_type))
 
         return {'loss': loss, 'preds': output.squeeze(), 'targets': target}
 
