@@ -1,17 +1,31 @@
-
 import torch
 from torch import nn
 from torchmetrics import (MetricCollection, MeanAbsoluteError,
                           MeanAbsolutePercentageError,
                           MeanSquaredError, R2Score,
                           Accuracy, Precision, Recall, F1Score)
+from torchmetrics import Metric
 
+
+class LossMetric(Metric):
+    def __init__(self, torch_module, target_type=torch.float32):
+        super().__init__()
+        self.loss = torch_module
+        self.target_type = target_type
+        self.add_state('loss_value', default=torch.tensor(0), dist_reduce_fx="sum")
+
+    def update(self, preds: torch.Tensor, target: torch.Tensor):
+        self.loss_value = self.loss(preds.squeeze(), target.to(self.target_type))
+
+    def compute(self):
+        return self.loss_value
 
 
 class ClassifierMetricsMixin:
-    def _init_metrics(self, loss_criterion: str = 'cross_entropy'):
+    def _init_metrics(self):
         dist_sync_on_step = True
         metrics = MetricCollection({
+            'loss': LossMetric(self.loss_criterion, self.hparams.target_type),
             'accuracy': Accuracy(dist_sync_on_step=dist_sync_on_step),
             'precision': Precision(dist_sync_on_step=dist_sync_on_step),
             'recall': Recall(dist_sync_on_step=dist_sync_on_step),
@@ -24,20 +38,20 @@ class ClassifierMetricsMixin:
 
 class ValStepMixin:
     def validation_step(self, batch, batch_idx):
-        x, y = batch[:-1], batch[-1]
-        y_hat = self(*x)
-        loss = self.loss_criterion(y_hat, y.to(torch.float))
+        data, target = batch
+        output = self.acoustic_model(data)
+        loss = self.loss_criterion(output.squeeze(), target.to(self.hparams.target_type))
 
-        return {'loss': loss, 'preds': y_hat.detach(), 'target': y.detach()}
+        return {'loss': loss, 'preds': output.squeeze(), 'targets': target}
 
 
 class TestStepMixin:
     def test_step(self, batch, batch_idx):
-        x, y = batch[:-1], batch[-1]
-        y_hat = self(*x)
-        loss = self.loss_criterion(y_hat, y.to(torch.float))
+        data, target = batch
+        output = self.acoustic_model(data)
+        loss = self.loss_criterion(output.squeeze(), target.to(self.hparams.target_type))
 
-        return {'loss': loss, 'preds': y_hat.detach(), 'target': y.detach()}
+        return {'loss': loss, 'preds': output.squeeze(), 'targets': target}
 
 
 class ValTestStepMixin(ValStepMixin, TestStepMixin):
@@ -46,9 +60,10 @@ class ValTestStepMixin(ValStepMixin, TestStepMixin):
 
 class TrainStepEndMixin:
     def training_step_end(self, outputs):
-        preds, targets = self.scale_output(outputs['preds']), self.scale_output(outputs['target'])
+        preds, targets = outputs['preds'], outputs['targets']
         self.train_metrics(preds, targets)
-        self.log_dict(self.train_metrics, prog_bar=False,
+        self.log_dict(self.train_metrics,
+                      prog_bar=False,
                       logger=True, on_epoch=True,
                       batch_size=outputs['preds'].shape[0])
         return outputs['loss']
@@ -56,26 +71,26 @@ class TrainStepEndMixin:
 
 class ValStepEndMixin:
     def validation_step_end(self, outputs):
-        preds, targets = self.scale_output(outputs['preds']), self.scale_output(outputs['target'])
+        preds, targets = outputs['preds'], outputs['targets']
         self.val_metrics(preds, targets)
         self.checkpoint_metrics(preds, targets)
-
-        self.log_dict(self.val_metrics, prog_bar=False,
-                      logger=True, on_epoch=True,
+        self.log_dict(self.val_metrics, prog_bar=False, logger=True, on_epoch=True,
                       batch_size=outputs['preds'].shape[0])
-        self.log_dict(self.checkpoint_metrics, prog_bar=False,
-                      logger=True, on_epoch=True,
+        self.log_dict(self.checkpoint_metrics, prog_bar=False, logger=True, on_epoch=True,
                       batch_size=outputs['preds'].shape[0])
         return outputs['loss']
 
 
 class TestStepEndMixin:
-    def training_step_end(self, outputs):
-        preds, targets = self.scale_output(outputs['preds']), self.scale_output(outputs['target'])
-        self.train_metrics(preds, targets)
-        self.log_dict(self.train_metrics, prog_bar=False,
-                      logger=True, on_epoch=True,
-                      batch_size=outputs['preds'].shape[0])
+    def test_step_end(self, outputs):
+        preds, targets = outputs['preds'], outputs['targets']
+        self.test_metrics(preds, targets)
+        self.log_dict(
+            self.test_metrics,
+            prog_bar=False,
+            logger=True,
+            on_epoch=True,
+            batch_size=outputs['preds'].shape[0])
         return outputs['loss']
 
 
@@ -127,10 +142,9 @@ class TensorBoardLoggerMixin(TrainValTestEndMixin, LogWeightsAndGradientsMixin):
 class ClassifierMixin(ClassifierMetricsMixin, ValTestStepMixin):
     def __init__(self):
         super().__init__()
-        self._init_metrics()
+        # self._init_metrics()
 
 
 class ClassifierTensorBoardMixin(ClassifierMixin, TensorBoardLoggerMixin):
     def __init__(self):
         super().__init__()
-
