@@ -25,7 +25,7 @@ class ClassifierMetricsMixin:
     def _init_metrics(self):
         dist_sync_on_step = True
         metrics = MetricCollection({
-            'loss': LossMetric(self.loss_criterion, self.hparams.target_type),
+            'loss': LossMetric(self.loss_criterion, self.target_type),
             'accuracy': Accuracy(dist_sync_on_step=dist_sync_on_step),
             'precision': Precision(dist_sync_on_step=dist_sync_on_step),
             'recall': Recall(dist_sync_on_step=dist_sync_on_step),
@@ -40,7 +40,7 @@ class ValStepMixin:
     def validation_step(self, batch, batch_idx):
         data, target = batch
         output = self.acoustic_model(data)
-        loss = self.loss_criterion(output.squeeze(), target.to(self.hparams.target_type))
+        loss = self.loss_criterion(output.squeeze(), target.to(self.target_type))
 
         return {'loss': loss, 'preds': output.squeeze(), 'targets': target}
 
@@ -49,7 +49,7 @@ class TestStepMixin:
     def test_step(self, batch, batch_idx):
         data, target = batch
         output = self.acoustic_model(data)
-        loss = self.loss_criterion(output.squeeze(), target.to(self.hparams.target_type))
+        loss = self.loss_criterion(output.squeeze(), target.to(self.target_type))
 
         return {'loss': loss, 'preds': output.squeeze(), 'targets': target}
 
@@ -135,11 +135,11 @@ class LogWeightsAndGradientsMixin(LogWeightsMixin, LogGradientsMixin):
     ...
 
 
-class TensorBoardLoggerMixin(TrainValTestEndMixin, LogWeightsAndGradientsMixin):
+class TensorBoardLoggerMixin(LogWeightsAndGradientsMixin):
     ...
 
 
-class ClassifierMixin(ClassifierMetricsMixin, ValTestStepMixin):
+class ClassifierMixin(ClassifierMetricsMixin, ValTestStepMixin, TrainValTestEndMixin):
     def __init__(self):
         super().__init__()
         # self._init_metrics()

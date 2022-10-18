@@ -19,77 +19,77 @@ class LossMetric(Metric):
         return self.loss_value
 
 
-class ClassifierModuleMixin(pl.LightningModule):
-    def __init__(self):
-        super().__init__()
-
-    def _set_metrics(self):
-        metrics = MetricCollection({
-            'loss': LossMetric(self.loss_criterion, self.target_type),
-            'accuracy': Accuracy(average='macro', num_classes=self.num_classes, dist_sync_on_step=True),
-            'precision': Precision(average='macro', num_classes=self.num_classes, dist_sync_on_step=True),
-            'recall': Recall(average='macro', num_classes=self.num_classes, dist_sync_on_step=True),
-            'f1': F1Score(average='macro', num_classes=self.num_classes, dist_sync_on_step=True)
-        })
-        self.train_metrics = metrics.clone(prefix='train/')
-        self.val_metrics = metrics.clone(prefix='val/')
-        self.test_metrics = metrics.clone(prefix='test/')
-        self.checkpoint_metrics = metrics.clone(prefix='checkpoint/')
-
-    def training_step_end(self, outputs):
-        preds, targets = outputs['preds'], outputs['targets']
-        self.train_metrics(preds, targets)
-        self.log_dict(self.train_metrics,
-                      prog_bar=False,
-                      logger=True, on_epoch=True,
-                      batch_size=outputs['preds'].shape[0])
-        return outputs['loss']
-
-    def validation_step_end(self, outputs):
-        preds, targets = outputs['preds'], outputs['targets']
-        self.val_metrics(preds, targets)
-        self.checkpoint_metrics(preds, targets)
-        self.log_dict(self.val_metrics, prog_bar=False, logger=True, on_epoch=True,
-                      batch_size=outputs['preds'].shape[0])
-        self.log_dict(self.checkpoint_metrics, prog_bar=False, logger=True, on_epoch=True,
-                      batch_size=outputs['preds'].shape[0])
-        return outputs['loss']
-
-    def test_step_end(self, outputs):
-        preds, targets = outputs['preds'], outputs['targets']
-        self.test_metrics(preds, targets)
-        self.log_dict(
-            self.test_metrics,
-            prog_bar=False,
-            logger=True,
-            on_epoch=True,
-            batch_size=outputs['preds'].shape[0])
-        return outputs['loss']
-
-    def on_after_backward(self, trainer=None, pl_module=None, optimizer=None):
-        if self.trainer.global_step % self.log_grad_and_acts_every_n_steps == 0:
-            for name, params in self.named_parameters():
-                if "weight" not in name or params.grad is None:
-                    continue
-                self.log('train_meta_info/variance/gradients/{}'.format(name),
-                         torch.std(params.grad.data.view(-1).detach()), on_epoch=True, on_step=True, prog_bar=False,
-                         logger=True)
-                self.log('train_meta_info/mean/gradients/{}'.format(name),
-                         torch.mean(params.grad.data.view(-1).detach()), on_epoch=True, on_step=True, prog_bar=False,
-                         logger=True)
-                if hasattr(self, 'logger') and self.logger is not None:
-                    self.logger.experiment.add_histogram(tag=f'grads/{name}',
-                                                         values=params.grad.data.view(-1).detach(),
-                                                         global_step=self.trainer.global_step)
-
-    def on_train_epoch_end(self, trainer=None, pl_module=None):
-        for name, params in self.named_parameters():
-            if "weight" not in name:
-                continue
-            if hasattr(self, 'logger') and self.logger is not None:
-                self.logger.experiment.add_histogram(tag=f'weights/{name}',
-                                                     values=params.data.view(-1).detach(),
-                                                     global_step=self.trainer.global_step)
+# class ClassifierModuleMixin(pl.LightningModule):
+#     def __init__(self):
+#         super().__init__()
+#
+#     def _set_metrics(self):
+#         metrics = MetricCollection({
+#             'loss': LossMetric(self.loss_criterion, self.target_type),
+#             'accuracy': Accuracy(average='macro', num_classes=self.num_classes, dist_sync_on_step=True),
+#             'precision': Precision(average='macro', num_classes=self.num_classes, dist_sync_on_step=True),
+#             'recall': Recall(average='macro', num_classes=self.num_classes, dist_sync_on_step=True),
+#             'f1': F1Score(average='macro', num_classes=self.num_classes, dist_sync_on_step=True)
+#         })
+#         self.train_metrics = metrics.clone(prefix='train/')
+#         self.val_metrics = metrics.clone(prefix='val/')
+#         self.test_metrics = metrics.clone(prefix='test/')
+#         self.checkpoint_metrics = metrics.clone(prefix='checkpoint/')
+#
+#     def training_step_end(self, outputs):
+#         preds, targets = outputs['preds'], outputs['targets']
+#         self.train_metrics(preds, targets)
+#         self.log_dict(self.train_metrics,
+#                       prog_bar=False,
+#                       logger=True, on_epoch=True,
+#                       batch_size=outputs['preds'].shape[0])
+#         return outputs['loss']
+#
+#     def validation_step_end(self, outputs):
+#         preds, targets = outputs['preds'], outputs['targets']
+#         self.val_metrics(preds, targets)
+#         self.checkpoint_metrics(preds, targets)
+#         self.log_dict(self.val_metrics, prog_bar=False, logger=True, on_epoch=True,
+#                       batch_size=outputs['preds'].shape[0])
+#         self.log_dict(self.checkpoint_metrics, prog_bar=False, logger=True, on_epoch=True,
+#                       batch_size=outputs['preds'].shape[0])
+#         return outputs['loss']
+#
+#     def test_step_end(self, outputs):
+#         preds, targets = outputs['preds'], outputs['targets']
+#         self.test_metrics(preds, targets)
+#         self.log_dict(
+#             self.test_metrics,
+#             prog_bar=False,
+#             logger=True,
+#             on_epoch=True,
+#             batch_size=outputs['preds'].shape[0])
+#         return outputs['loss']
+#
+#     def on_after_backward(self, trainer=None, pl_module=None, optimizer=None):
+#         if self.trainer.global_step % self.log_grad_and_acts_every_n_steps == 0:
+#             for name, params in self.named_parameters():
+#                 if "weight" not in name or params.grad is None:
+#                     continue
+#                 self.log('train_meta_info/variance/gradients/{}'.format(name),
+#                          torch.std(params.grad.data.view(-1).detach()), on_epoch=True, on_step=True, prog_bar=False,
+#                          logger=True)
+#                 self.log('train_meta_info/mean/gradients/{}'.format(name),
+#                          torch.mean(params.grad.data.view(-1).detach()), on_epoch=True, on_step=True, prog_bar=False,
+#                          logger=True)
+#                 if hasattr(self, 'logger') and self.logger is not None:
+#                     self.logger.experiment.add_histogram(tag=f'grads/{name}',
+#                                                          values=params.grad.data.view(-1).detach(),
+#                                                          global_step=self.trainer.global_step)
+#
+#     def on_train_epoch_end(self, trainer=None, pl_module=None):
+#         for name, params in self.named_parameters():
+#             if "weight" not in name:
+#                 continue
+#             if hasattr(self, 'logger') and self.logger is not None:
+#                 self.logger.experiment.add_histogram(tag=f'weights/{name}',
+#                                                      values=params.data.view(-1).detach(),
+#                                                      global_step=self.trainer.global_step)
 
 
 class AudioPreprocessorCallback(pl.Callback):
@@ -131,23 +131,22 @@ class AudioPreprocessorCallback(pl.Callback):
         return data, labels
 
 
-class PhonemeRecognizer(ClassifierTensorBoardMixin, pl.LightningModule):
+class PhonemeRecognizer(ClassifierMixin, pl.LightningModule):
     def __init__(self,
                  acoustic_model: torch.nn.Module,
                  model_params: dict,
-                 num_classes: int,
                  lr: float,
                  loss_criterion,
                  target_type=torch.float32
                  ):
         #
         super().__init__()
+        self.target_type = target_type
         self.loss_criterion = loss_criterion
-        self.save_hyperparameters(ignore=['acoustic_model'])
+        self.save_hyperparameters(ignore=['loss_criterion', 'target_type'])
         self._init_metrics()
         self.log_grad_and_acts_every_n_steps = 10
         self.acoustic_model = acoustic_model(**model_params)
-        # self.save_hyperparameters(ignore=['acoustic_model'])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.acoustic_model(x)
@@ -155,17 +154,17 @@ class PhonemeRecognizer(ClassifierTensorBoardMixin, pl.LightningModule):
     def training_step(self, batch: torch.Tensor, batch_idx: int):
         data, target = batch
         output = self.acoustic_model(data)
-        loss = self.loss_criterion(output.squeeze(), target.to(self.hparams.target_type))
+        loss = self.loss_criterion(output.squeeze(), target.to(self.target_type))
 
         return {'loss': loss, 'preds': output.squeeze(), 'targets': target}
 
     def validation_step(self, batch, batch_idx):
         data, target = batch
         output = self.acoustic_model(data)
-        loss = self.loss_criterion(output.squeeze(), target.to(self.hparams.target_type))
+        loss = self.loss_criterion(output.squeeze(), target.to(self.target_type))
 
         return {'loss': loss, 'preds': output.squeeze(), 'targets': target}
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adadelta(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adadelta(self.parameters(), lr=self.hparams.lr)
         return optimizer
