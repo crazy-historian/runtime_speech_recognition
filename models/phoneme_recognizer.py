@@ -135,8 +135,8 @@ class PhonemeRecognizer(ClassifierMixin, pl.LightningModule):
     def __init__(self,
                  acoustic_model: torch.nn.Module,
                  model_params: dict,
-                 lr: float,
-                 loss_criterion,
+                 lr: float = 3e-2,
+                 loss_criterion=nn.NLLLoss(),
                  target_type=torch.float32
                  ):
         #
