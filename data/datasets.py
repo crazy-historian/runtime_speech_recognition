@@ -31,44 +31,6 @@ class AudioData:
         return iter(astuple(self))
 
 
-class AudioDataset(Dataset, ABC):
-    @abstractmethod
-    def _prepare_description(self, *args, **kwargs) -> pd.DataFrame:
-        ...
-
-    @abstractmethod
-    def _filter_description_table(self, *args, **kwargs) -> pd.DataFrame:
-        ...
-
-    @abstractmethod
-    def _get_audio_fragments(self) -> List[AudioFragment]:
-        ...
-
-    def _load_audio_fragment(self, audio_fragment: AudioFragment) -> AudioData:
-        metadata = torchaudio.info(audio_fragment.source_file)
-        frame_rate = int(metadata.sample_rate)
-        sample_width = metadata.bits_per_sample
-        t1 = round(audio_fragment.t1 * frame_rate)
-        t2 = round(audio_fragment.t2 * frame_rate)
-        data, _ = torchaudio.load(audio_fragment.source_file)
-        data = data[:, t1:t2]
-        if self.padding != 0:
-            new_shape = self.padding - data.shape[1]
-            return AudioData(
-                data=F.pad(data, (0, new_shape), 'constant', 0.0),
-                label=audio_fragment.label,
-                frame_rate=frame_rate,
-                sample_width=sample_width
-            )
-        else:
-            return AudioData(
-                data=data,
-                label=audio_fragment.label,
-                frame_rate=frame_rate,
-                sample_width=sample_width
-            )
-
-
 class PhonemeLabeler:
     def __init__(self, phoneme_classes: Optional[dict[str, list]] = None, mode: Optional[str] = 'default'):
         self.mode = mode
@@ -83,6 +45,46 @@ class PhonemeLabeler:
                     return phoneme_class
             else:
                 return phoneme_label
+
+
+class AudioDataset(Dataset, ABC):
+    @abstractmethod
+    def _prepare_description(self, *args, **kwargs) -> pd.DataFrame:
+        ...
+
+    @abstractmethod
+    def _filter_description_table(self, *args, **kwargs) -> pd.DataFrame:
+        ...
+
+    @abstractmethod
+    def _get_audio_fragments(self, *args, **kwargs) -> list[AudioData]:
+        ...
+
+    def _load_audio_fragment(self, audio_fragment: pd.Series) -> AudioData:
+        metadata = torchaudio.info(audio_fragment.wav_file_path)
+        frame_rate = int(metadata.sample_rate)
+        sample_width = metadata.bits_per_sample
+        t0 = round(audio_fragment.t0 * frame_rate)
+        t1 = round(audio_fragment.t1 * frame_rate)
+
+        data, _ = torchaudio.load(audio_fragment.wav_file_path)
+        data = data[:, t0:t1]
+
+        if self.padding != 0:
+            new_shape = self.padding - data.shape[1]
+            return AudioData(
+                data=F.pad(data, (0, new_shape), 'constant', 0.0),
+                label=audio_fragment.phone_class,
+                frame_rate=frame_rate,
+                sample_width=sample_width
+            )
+        else:
+            return AudioData(
+                data=data,
+                label=audio_fragment.phone_name,
+                frame_rate=frame_rate,
+                sample_width=sample_width
+            )
 
 
 class TIMITDataset(AudioDataset):
@@ -110,13 +112,13 @@ class TIMITDataset(AudioDataset):
         self.phoneme_labeler = phoneme_labeler
 
         self.description_table = self._prepare_description()
-        self.description_table = self._filter_description_table(usage, percentage, gender, dialect)
+        self.description_table = self._filter_description_table(usage, phone_codes, percentage, gender, dialect)
         self.audio_fragments = self._get_audio_fragments()
 
     def _prepare_description(self):
-        if Path(self.description_file_path).is_file():
-            return pd.read_csv(self.description_file_path)
-        else:
+        # if Path(self.description_file_path).is_file():
+        #     return pd.read_csv(self.description_file_path)
+        # else:
             dialects = {'DR1': 'New England', 'DR2': 'Northern', 'DR3': 'North Midland', 'DR4': 'South Midland',
                         'DR5': 'Southern', 'DR6': 'New York City', 'DR7': 'Western', 'DR8': 'Army Brat'}
             test_dir = Path(self.root_dir, 'TEST')
@@ -131,26 +133,44 @@ class TIMITDataset(AudioDataset):
                         speaker_gender = speaker_dir_name[0]
                         speaker_id = speaker_dir_name[1:]
                         for wav_file in speaker.glob('*.WAV.wav'):
-                            table.append(
-                                [usage,
-                                 speaker_id,
-                                 speaker_gender,
-                                 dialects[str(dialect.stem)],
-                                 str(wav_file),
-                                 str(Path(speaker, wav_file.stem.split('.')[0] + '.PHN'))]
-                            )
-            df = pd.DataFrame(data=table, columns=['usage', 'speaker_id', 'speaker_gender',
-                                                   'dialect', 'wav_file_path', 'labels_file_path'])
+                            with open(Path(speaker, wav_file.stem.split('.')[0] + '.PHN')) as labels:
+                                for label in labels:
+                                    label = label.split()
+                                    phone_name = label[2].upper()
+                                    start = round(int(label[0]) / self.timit_constant, 3)
+                                    end = round(int(label[1]) / self.timit_constant, 3)
+
+                                    table.append([
+                                        phone_name,                         # ARPABET code
+                                        self.phoneme_labeler[phone_name],   # class of phonemes
+                                        usage,                              # TEST or TRAIN
+                                        speaker_id,
+                                        speaker_gender,
+                                        dialects[str(dialect.stem)],
+                                        str(wav_file),
+                                        start,
+                                        end
+                                    ])
+
+            df = pd.DataFrame(data=table, columns=['phone_name', 'phone_class', 'usage', 'speaker_id', 'speaker_gender',
+                                                   'dialect', 'wav_file_path', 't0', 't1'])
             df.to_csv(self.description_file_path, index=False)
 
             return df
 
-    def _filter_description_table(self, usage: str, percentage: Optional[float], gender: Optional[str],
+    def _filter_description_table(self,
+                                  usage: str,
+                                  phone_classes: Optional[List[str]],
+                                  percentage: Optional[float],
+                                  gender: Optional[str],
                                   dialect: Optional[List[str]]) -> pd.DataFrame:
         self.description_table = self.description_table.loc[self.description_table['usage'] == usage]
 
         if percentage is not None:
             self.description_table = self.description_table.sample(frac=percentage)
+
+        if phone_classes is not None:
+            self.description_table = self.description_table.loc[self.description_table['phone_class'].isin(phone_classes)]
 
         if gender is not None:
             self.description_table = self.description_table.loc[self.description_table['gender'] == gender]
@@ -161,40 +181,21 @@ class TIMITDataset(AudioDataset):
 
         return self.description_table
 
-    def _get_audio_fragments(self) -> list:
+    def _get_audio_fragments(self, *args, **kwargs) -> list[AudioData]:
         fragments = list()
-        self.description_table = self.description_table.sample(frac=1.0)
-        for _, file in self.description_table.iterrows():
-            timings = list()
-            with open(file['labels_file_path']) as labels:
-                for label in labels:
-                    label = label.split()
-                    mark = label[2].upper()
-                    if self.phone_codes is None or mark in self.phone_codes:
-                        start = round(int(label[0]) / self.timit_constant, 3)
-                        end = round(int(label[1]) / self.timit_constant, 3)
-                        timings.append((self.phoneme_labeler[mark], start, end))
-
-                for timing in timings:
-                    fragments.append(
-                        AudioFragment(
-                            source_file=file['wav_file_path'],
-                            label=timing[0],
-                            t1=timing[1],
-                            t2=timing[2]
-                        )
-                    )
+        for _, row in self.description_table.iterrows():
+            fragments.append(self._load_audio_fragment(row))
         return fragments
 
     def __len__(self) -> int:
-        return len(self.audio_fragments)
+        return len(self.description_table)
 
     def __getitem__(self, item: int) -> AudioData:
         if self.transform:
-            audio_data = self._load_audio_fragment(self.audio_fragments[item])
+            audio_data = self.audio_fragments[item]
             audio_data.data = self.transform(audio_data.data)
             return audio_data
-        return self._load_audio_fragment(self.audio_fragments[item])
+        return self.audio_fragments[item]
 
 
 class ArcticDataset(Dataset):
