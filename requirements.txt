@@ -14,3 +14,9 @@ sounddevice>=0.4.5
 audiochains>=0.1.3
 PyQt5>=5.15.7
 pyqtgraph>=0.13.1
+pytorch-lightning==1.9.5
+torchaudio
+matplotlib
+pandas
+librosa
+textgrid
