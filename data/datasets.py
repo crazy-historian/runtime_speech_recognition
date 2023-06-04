@@ -81,7 +81,7 @@ class AudioDataset(Dataset, ABC):
         else:
             return AudioData(
                 data=data,
-                label=audio_fragment.phone_name,
+                label=audio_fragment.phone_class, ### здесь phone_name, а выше phone_class, это пиздец, надо исправлять
                 frame_rate=frame_rate,
                 sample_width=sample_width
             )
