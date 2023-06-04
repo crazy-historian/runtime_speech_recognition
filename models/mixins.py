@@ -26,10 +26,11 @@ class ClassifierMetricsMixin:
         dist_sync_on_step = True
         metrics = MetricCollection({
             'loss': LossMetric(self.loss_criterion, self.target_type),
-            'accuracy': Accuracy(dist_sync_on_step=dist_sync_on_step),
-            'precision': Precision(dist_sync_on_step=dist_sync_on_step),
-            'recall': Recall(dist_sync_on_step=dist_sync_on_step),
-            'f1': F1Score(dist_sync_on_step=dist_sync_on_step)})
+            'accuracy': Accuracy(dist_sync_on_step=dist_sync_on_step, task=self.task, num_classes=self.num_of_classes),
+            'precision': Precision(dist_sync_on_step=dist_sync_on_step, task=self.task, num_classes=self.num_of_classes),
+            'recall': Recall(dist_sync_on_step=dist_sync_on_step, task=self.task, num_classes=self.num_of_classes),
+            'f1': F1Score(dist_sync_on_step=dist_sync_on_step, task=self.task, num_classes=self.num_of_classes)
+            })
         self.train_metrics = metrics.clone(prefix='train/')
         self.val_metrics = metrics.clone(prefix='val/')
         self.test_metrics = metrics.clone(prefix='test/')
