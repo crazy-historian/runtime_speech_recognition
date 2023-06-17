@@ -116,9 +116,9 @@ class TIMITDataset(AudioDataset):
         self.audio_fragments = self._get_audio_fragments()
 
     def _prepare_description(self):
-        # if Path(self.description_file_path).is_file():
-        #     return pd.read_csv(self.description_file_path)
-        # else:
+        if Path(self.description_file_path).is_file():
+            return pd.read_csv(self.description_file_path)
+        else:
             dialects = {'DR1': 'New England', 'DR2': 'Northern', 'DR3': 'North Midland', 'DR4': 'South Midland',
                         'DR5': 'Southern', 'DR6': 'New York City', 'DR7': 'Western', 'DR8': 'Army Brat'}
             test_dir = Path(self.root_dir, 'TEST')
